@@ -1,49 +1,40 @@
 {
   "Martina": {
-    "saldo_mattine": 6,
-    "saldo_pomeriggi": 5,
+    "saldo_mattine": 9,
+    "saldo_pomeriggi": 8,
     "ultimi_riposi": [
-      "Lunedì",
-      "Sabato"
+      "Sabato",
+      "Venerdì"
     ],
     "ultimi_pattern": [
       [
-        "P",
+        "R",
         "M",
+        "P",
         "P",
         "M",
         "R",
-        "P",
         "M"
       ],
       [
-        "R",
-        "M",
         "P",
         "P",
         "M",
+        "P",
         "R",
+        "M",
         "M"
       ]
     ]
   },
   "Alessia": {
-    "saldo_mattine": 5,
-    "saldo_pomeriggi": 6,
+    "saldo_mattine": 7,
+    "saldo_pomeriggi": 9,
     "ultimi_riposi": [
-      "Lunedì",
-      "Venerdì"
+      "Martedì",
+      "Giovedì"
     ],
     "ultimi_pattern": [
-      [
-        "M",
-        "P",
-        "R",
-        "P",
-        "M",
-        "P",
-        "M"
-      ],
       [
         "R",
         "P",
@@ -52,40 +43,77 @@
         "R",
         "M",
         "P"
+      ],
+      [
+        "M",
+        "R",
+        "P",
+        "R",
+        "M",
+        "P",
+        "P"
       ]
     ]
   },
   "Elena": {
-    "saldo_mattine": 5,
-    "saldo_pomeriggi": 6,
+    "saldo_mattine": 8,
+    "saldo_pomeriggi": 8,
     "ultimi_riposi": [
-      "Domenica",
+      "Lunedì",
       "Domenica"
     ],
     "ultimi_pattern": [
       [
-        "R",
         "P",
         "M",
         "P",
         "M",
-        "M",
+        "P",
+        "P",
         "R"
       ],
       [
-        "P",
+        "R",
         "M",
         "P",
         "M",
         "P",
-        "P",
+        "M",
         "R"
       ]
     ]
   },
   "Carla": {
-    "saldo_mattine": 5,
-    "saldo_pomeriggi": 6,
+    "saldo_mattine": 7,
+    "saldo_pomeriggi": 9,
+    "ultimi_riposi": [
+      "Lunedì",
+      "Sabato"
+    ],
+    "ultimi_pattern": [
+      [
+        "M",
+        "P",
+        "R",
+        "M",
+        "P",
+        "M",
+        "P"
+      ],
+      [
+        "R",
+        "P",
+        "M",
+        "M",
+        "P",
+        "R",
+        "P"
+      ]
+    ]
+  },
+  "Matteo": {
+    "saldo_mattine": 8,
+    "saldo_pomeriggi": 8,
     "ultimi_riposi": [
       "Giovedì",
       "Mercoledì"
@@ -96,43 +124,15 @@
         "R",
         "M",
         "R",
-        "P",
-        "M",
-        "P"
-      ],
-      [
         "M",
         "P",
-        "R",
-        "M",
-        "P",
-        "M",
-        "P"
-      ]
-    ]
-  },
-  "Matteo": {
-    "saldo_mattine": 5,
-    "saldo_pomeriggi": 5,
-    "ultimi_riposi": [
-      "Martedì",
-      "Giovedì"
-    ],
-    "ultimi_pattern": [
-      [
-        "R",
-        "M",
-        "P",
-        "M",
-        "P",
-        "R",
-        "P"
+        "M"
       ],
       [
         "P",
-        "R",
         "M",
         "R",
+        "P",
         "M",
         "P",
         "M"
@@ -150,10 +150,11 @@
     ],
     "stato_pre_ultima_generazione": {
       "Martina": {
-        "saldo_mattine": 3,
-        "saldo_pomeriggi": 3,
+        "saldo_mattine": 6,
+        "saldo_pomeriggi": 5,
         "ultimi_riposi": [
-          "Venerdì"
+          "Lunedì",
+          "Sabato"
         ],
         "ultimi_pattern": [
           [
@@ -163,15 +164,25 @@
             "M",
             "R",
             "P",
+            "M"
+          ],
+          [
+            "R",
+            "M",
+            "P",
+            "P",
+            "M",
+            "R",
             "M"
           ]
         ]
       },
       "Alessia": {
-        "saldo_mattine": 3,
-        "saldo_pomeriggi": 3,
+        "saldo_mattine": 5,
+        "saldo_pomeriggi": 6,
         "ultimi_riposi": [
-          "Mercoledì"
+          "Lunedì",
+          "Venerdì"
         ],
         "ultimi_pattern": [
           [
@@ -182,14 +193,23 @@
             "M",
             "P",
             "M"
+          ],
+          [
+            "R",
+            "P",
+            "M",
+            "P",
+            "R",
+            "M",
+            "P"
           ]
         ]
       },
       "Elena": {
-        "saldo_mattine": 3,
-        "saldo_pomeriggi": 2,
+        "saldo_mattine": 5,
+        "saldo_pomeriggi": 6,
         "ultimi_riposi": [
-          "Lunedì",
+          "Domenica",
           "Domenica"
         ],
         "ultimi_pattern": [
@@ -201,15 +221,24 @@
             "M",
             "M",
             "R"
+          ],
+          [
+            "P",
+            "M",
+            "P",
+            "M",
+            "P",
+            "P",
+            "R"
           ]
         ]
       },
       "Carla": {
-        "saldo_mattine": 2,
-        "saldo_pomeriggi": 3,
+        "saldo_mattine": 5,
+        "saldo_pomeriggi": 6,
         "ultimi_riposi": [
-          "Martedì",
-          "Giovedì"
+          "Giovedì",
+          "Mercoledì"
         ],
         "ultimi_pattern": [
           [
@@ -217,6 +246,15 @@
             "R",
             "M",
             "R",
+            "P",
+            "M",
+            "P"
+          ],
+          [
+            "M",
+            "P",
+            "R",
+            "M",
             "P",
             "M",
             "P"
@@ -224,11 +262,11 @@
         ]
       },
       "Matteo": {
-        "saldo_mattine": 2,
-        "saldo_pomeriggi": 3,
+        "saldo_mattine": 5,
+        "saldo_pomeriggi": 5,
         "ultimi_riposi": [
-          "Lunedì",
-          "Sabato"
+          "Martedì",
+          "Giovedì"
         ],
         "ultimi_pattern": [
           [
@@ -239,6 +277,15 @@
             "P",
             "R",
             "P"
+          ],
+          [
+            "P",
+            "R",
+            "M",
+            "R",
+            "M",
+            "P",
+            "M"
           ]
         ]
       }
