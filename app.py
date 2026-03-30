@@ -2,6 +2,8 @@
 # -*- coding: utf-8 -*-
 """
 app.py — Sistema Turni Gastronomia (Streamlit)
+Regola riposo: esattamente 1 riposo per blocco di 7 giorni per persona attiva.
+Ferie: selezionabili per giorni specifici (non necessariamente intera settimana).
 """
 
 import streamlit as st
@@ -72,142 +74,216 @@ def stato_vuoto():
         }
     s["_meta"] = {
         "ultimo_input_maurizio":          None,
-        "ultimo_input_ferie":             [],
+        "ultimo_input_ferie":             {},
         "stato_pre_ultima_generazione":   None,
         "ultimo_turno_generato":          None,
         "ultimo_maurizio_map":            None,
     }
     return s
 
+def migra_stato(stato):
+    """Aggiunge campi mancanti a stati generati da versioni precedenti."""
+    for d in DIPENDENTI_NORMALI:
+        stato[d].setdefault("saldo_riposi", 0)
+        stato[d].setdefault("saldo_ferie",  0)
+    if "_meta" not in stato:
+        stato["_meta"] = {}
+    stato["_meta"].setdefault("ultimo_input_maurizio",          None)
+    stato["_meta"].setdefault("ultimo_input_ferie",             {})
+    stato["_meta"].setdefault("stato_pre_ultima_generazione",   None)
+    stato["_meta"].setdefault("ultimo_turno_generato",          None)
+    stato["_meta"].setdefault("ultimo_maurizio_map",            None)
+    return stato
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HELPERS FERIE
+# ferie_per_persona: Dict[str, List[int]]  — nome → lista indici giorno (0–6)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def is_ferie(d, i, ferie_per_persona):
+    return i in ferie_per_persona.get(d, [])
+
+def disponibili_il_giorno(i, ferie_per_persona):
+    return [d for d in DIPENDENTI_NORMALI if not is_ferie(d, i, ferie_per_persona)]
+
+def totale_giorni_ferie(ferie_per_persona):
+    return sum(len(v) for v in ferie_per_persona.values())
+
 # ─────────────────────────────────────────────────────────────────────────────
 # ANALISI FATTIBILITÀ
 # ─────────────────────────────────────────────────────────────────────────────
 
-def analizza_fattibilita(turni_maurizio, in_ferie):
-    attivi = [d for d in DIPENDENTI_NORMALI if d not in in_ferie]
-    N      = len(attivi)
-    S      = sum(1 for m in turni_maurizio if m["modalita"] == "sostituzione")
+def analizza_fattibilita(turni_maurizio, ferie_per_persona):
+    S         = sum(1 for m in turni_maurizio if m["modalita"] == "sostituzione")
+    ferie_tot = totale_giorni_ferie(ferie_per_persona)
 
-    slot_norm = 7 * 4 - S
-    slot_nec  = N * 6
-    deficit   = slot_nec - slot_norm
-    turni_da_3 = max(0, deficit)
+    # slot disponibili per normali = 28 - S
+    # slot necessari con 1 riposo esatto = 5*6 - ferie_tot = 30 - ferie_tot
+    # deficit = (30 - ferie_tot) - (28 - S) = 2 - ferie_tot + S
+    deficit    = 2 - ferie_tot + S
+    turni_da_3 = max(0,  deficit)
     avanzo     = max(0, -deficit)
+
+    # controllo per-giorno: mai più persone in ferie+assenze di quante ne servano
+    warning_giorni = []
+    for i in range(7):
+        disp = len(disponibili_il_giorno(i, ferie_per_persona))
+        maur = next((m for m in turni_maurizio if m["idx"] == i), None)
+        if maur and maur["modalita"] == "sostituzione":
+            needed = 3   # 1 turno ha Maurizio, l'altro ne ha 2
+        else:
+            needed = 4   # slot standard
+        if disp < needed - (1 if maur else 0):
+            warning_giorni.append(
+                f"⚠️ {GIORNI[i]}: solo {disp} persone disponibili "
+                f"(potrebbero non bastare per coprire il turno)"
+            )
 
     if deficit == 0:
         msg = "✅ Configurazione perfetta — 1 riposo esatto per tutti, nessun turno da 3."
         ok  = True
-    elif deficit > 0 and turni_da_3 <= 7:
+    elif 0 < turni_da_3 <= 7:
         msg = (f"⚠️ Con questa configurazione servono **{turni_da_3} turni con 3 normali** "
                f"per garantire 1 riposo esatto a tutti.")
         ok  = True
     elif avanzo > 0:
-        msg = (f"❌ Configurazione impossibile: ci sono **{avanzo} slot in eccesso** — "
-               f"alcuni turni avrebbero solo 1 persona. "
-               f"Aumenta i giorni di Maurizio in sostituzione o riduci le ferie.")
+        msg = (f"❌ Configurazione impossibile — ci sono **{avanzo} slot in eccesso**: "
+               f"alcuni turni avrebbero solo 1 persona.\n\n"
+               f"Aumenta i giorni di Maurizio in sostituzione "
+               f"oppure riduci i giorni di ferie.")
         ok  = False
     else:
         msg = "❌ Configurazione non gestibile."
         ok  = False
 
     return {
-        "attivi": attivi, "N": N, "S": S,
+        "S": S, "ferie_tot": ferie_tot,
         "deficit": deficit, "turni_da_3": turni_da_3, "avanzo": avanzo,
-        "ok": ok, "messaggio": msg,
+        "ok": ok, "messaggio": msg, "warning_giorni": warning_giorni,
     }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# LOGICA TURNI
+# LOGICA GENERAZIONE TURNI
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _calcola_slot_normali(turni_maurizio, in_ferie):
+def _calcola_slot_per_giorno(turni_maurizio, ferie_per_persona):
+    """
+    Per ogni giorno ritorna:
+      slot_m, slot_p  = normali necessari in quel turno
+      tot             = slot_m + slot_p
+      disp            = dipendenti disponibili (non in ferie)
+      n_riposi        = len(disp) - tot  (quanti devono riposare quel giorno)
+    """
     maurizio_map = {m["idx"]: m for m in turni_maurizio}
-    attivi       = [d for d in DIPENDENTI_NORMALI if d not in in_ferie]
-    slot = []
+    slots = []
     for i in range(7):
-        if i in maurizio_map:
-            m = maurizio_map[i]
-            if m["modalita"] == "sostituzione":
-                sm = 1 if m["turno"] == "M" else 2
-                sp = 1 if m["turno"] == "P" else 2
+        disp = disponibili_il_giorno(i, ferie_per_persona)
+        maur = maurizio_map.get(i)
+        if maur:
+            if maur["modalita"] == "sostituzione":
+                sm = 1 if maur["turno"] == "M" else 2
+                sp = 1 if maur["turno"] == "P" else 2
             else:
                 sm, sp = 2, 2
         else:
             sm, sp = 2, 2
-        slot.append({"M": sm, "P": sp, "tot": sm + sp})
-    return slot, maurizio_map, attivi
+        tot      = sm + sp
+        n_riposi = max(0, len(disp) - tot)
+        slots.append({"M": sm, "P": sp, "tot": tot,
+                      "disp": disp, "n_riposi": n_riposi})
+    return slots, maurizio_map
 
-def _giorni_lavoro_target(slot_normali, stato, attivi):
-    total_slots = sum(s["tot"] for s in slot_normali)
-    base        = total_slots // len(attivi)
-    resto       = total_slots % len(attivi)
-    saldo       = {d: stato[d]["saldo_mattine"] + stato[d]["saldo_pomeriggi"]
-                   for d in attivi}
-    ordinati    = sorted(attivi, key=lambda x: saldo[x])
-    target      = {d: base for d in attivi}
-    for i in range(resto):
-        target[ordinati[i]] += 1
-    return target
 
-def genera_turni(stato, turni_maurizio, in_ferie):
-    slot_normali, maurizio_map, attivi = _calcola_slot_normali(turni_maurizio, in_ferie)
-    griglia = {}
+def genera_turni(stato, turni_maurizio, ferie_per_persona):
+    slots, maurizio_map = _calcola_slot_per_giorno(turni_maurizio, ferie_per_persona)
+
+    # griglia iniziale: F nei giorni di ferie
+    griglia = {d: [None] * 7 for d in DIPENDENTI_NORMALI}
     for d in DIPENDENTI_NORMALI:
-        griglia[d] = ["F"] * 7 if d in in_ferie else [None] * 7
+        for i in range(7):
+            if is_ferie(d, i, ferie_per_persona):
+                griglia[d][i] = "F"
 
-    if not attivi:
-        return griglia, slot_normali, maurizio_map
+    # ogni persona attiva ha esattamente 1 riposo da assegnare
+    # "attivo in quel giorno" = non in ferie quel giorno
+    # lavori target = 7 - ferie_giorni_persona - 1
+    ferie_giorni = {d: len(ferie_per_persona.get(d, [])) for d in DIPENDENTI_NORMALI}
+    lavori_target  = {d: max(0, 7 - ferie_giorni[d] - 1) for d in DIPENDENTI_NORMALI}
+    riposi_rimasti = {d: (1 if ferie_giorni[d] < 7 else 0) for d in DIPENDENTI_NORMALI}
+    lavori_rimasti = dict(lavori_target)
 
-    giorni_target  = _giorni_lavoro_target(slot_normali, stato, attivi)
-    riposi_rimasti = {d: 7 - giorni_target[d] for d in attivi}
-    lavori_rimasti = dict(giorni_target)
-    sett_m = {d: 0 for d in attivi}
-    sett_p = {d: 0 for d in attivi}
+    sett_m = {d: 0 for d in DIPENDENTI_NORMALI}
+    sett_p = {d: 0 for d in DIPENDENTI_NORMALI}
 
     for i in range(7):
-        slot_m        = slot_normali[i]["M"]
-        slot_p        = slot_normali[i]["P"]
-        tot           = slot_normali[i]["tot"]
-        n_riposi_oggi = len(attivi) - tot
-        giorni_dopo   = 7 - i - 1
+        s          = slots[i]
+        disp       = s["disp"]          # disponibili oggi (non in ferie)
+        slot_m     = s["M"]
+        slot_p     = s["P"]
+        tot        = s["tot"]
+        n_rip_oggi = s["n_riposi"]
+        giorni_rimasti = 7 - i - 1      # giorni futuri (escl. oggi)
 
+        # ── selezione chi riposa oggi ────────────────────────────────────────
         def puo_riposare(d):
-            if riposi_rimasti[d] <= 0: return False
-            if lavori_rimasti[d] > giorni_dopo: return False
+            if d not in disp:            return False   # è in ferie
+            if riposi_rimasti[d] <= 0:   return False
+            # deve ancora poter completare i lavori nei giorni futuri
+            giorni_disp_futuri = sum(
+                1 for j in range(i+1, 7)
+                if not is_ferie(d, j, ferie_per_persona)
+            )
+            if lavori_rimasti[d] > giorni_disp_futuri:
+                return False
             return True
 
-        def deve_lavorare(d):
-            return riposi_rimasti[d] > giorni_dopo
+        def deve_lavorare_oggi(d):
+            if d not in disp: return False
+            # se i riposi rimasti superano i giorni futuri non in ferie, deve lavorare ora
+            giorni_ferie_futuri = sum(
+                1 for j in range(i+1, 7)
+                if is_ferie(d, j, ferie_per_persona)
+            )
+            giorni_liberi_futuri = giorni_rimasti - giorni_ferie_futuri
+            return riposi_rimasti[d] > giorni_liberi_futuri
 
-        candidati_riposo = [d for d in attivi if puo_riposare(d)]
+        candidati_riposo = [d for d in disp if puo_riposare(d)]
 
         def score_rip(d):
-            s = riposi_rimasti[d] * 2.0
-            if GIORNI[i] in stato[d]["ultimi_riposi"]: s -= 5.0
-            if stato[d]["ultimi_pattern"] and stato[d]["ultimi_pattern"][-1][i] == "R":
-                s -= 2.0
-            s += random.uniform(0, 0.4)
-            return s
+            s_val = riposi_rimasti[d] * 2.0
+            if GIORNI[i] in stato[d]["ultimi_riposi"]:
+                s_val -= 5.0
+            if stato[d]["ultimi_pattern"] and len(stato[d]["ultimi_pattern"]) > 0:
+                if stato[d]["ultimi_pattern"][-1][i] == "R":
+                    s_val -= 2.0
+            s_val += random.uniform(0, 0.4)
+            return s_val
 
         candidati_riposo.sort(key=score_rip, reverse=True)
 
         riposano_oggi = []
         for d in candidati_riposo:
-            if len(riposano_oggi) >= n_riposi_oggi: break
-            non_rip = [x for x in attivi if x not in riposano_oggi and x != d]
+            if len(riposano_oggi) >= n_rip_oggi:
+                break
+            non_rip = [x for x in disp if x not in riposano_oggi and x != d]
             if len(non_rip) >= tot:
                 riposano_oggi.append(d)
 
-        for d in attivi:
-            if d not in riposano_oggi and len(riposano_oggi) < n_riposi_oggi:
-                if riposi_rimasti[d] > 0 and not deve_lavorare(d):
+        # forza riposo a chi altrimenti non potrebbe più riposare
+        for d in disp:
+            if len(riposano_oggi) >= n_rip_oggi:
+                break
+            if d not in riposano_oggi and riposi_rimasti[d] > 0 and not deve_lavorare_oggi(d):
+                non_rip = [x for x in disp if x not in riposano_oggi and x != d]
+                if len(non_rip) >= tot:
                     riposano_oggi.append(d)
 
         for d in riposano_oggi:
             griglia[d][i] = "R"
             riposi_rimasti[d] -= 1
 
-        lavorano_oggi = [d for d in attivi if d not in riposano_oggi]
+        # ── assegnazione M/P ─────────────────────────────────────────────────
+        lavorano_oggi = [d for d in disp if d not in riposano_oggi]
 
         elena_forzata = None
         if i in maurizio_map and "Elena" in lavorano_oggi:
@@ -232,36 +308,43 @@ def genera_turni(stato, turni_maurizio, in_ferie):
         candidati.sort(key=score_mattina, reverse=True)
 
         for d in candidati:
-            if len(assegnati_m) < slot_m:   assegnati_m.append(d)
-            elif len(assegnati_p) < slot_p: assegnati_p.append(d)
+            if len(assegnati_m) < slot_m:    assegnati_m.append(d)
+            elif len(assegnati_p) < slot_p:  assegnati_p.append(d)
 
         for d in assegnati_m:
-            griglia[d][i] = "M"; lavori_rimasti[d] -= 1; sett_m[d] += 1
+            griglia[d][i] = "M"
+            lavori_rimasti[d] -= 1
+            sett_m[d] += 1
         for d in assegnati_p:
-            griglia[d][i] = "P"; lavori_rimasti[d] -= 1; sett_p[d] += 1
+            griglia[d][i] = "P"
+            lavori_rimasti[d] -= 1
+            sett_p[d] += 1
 
-    return griglia, slot_normali, maurizio_map
+    return griglia, slots, maurizio_map
 
-def genera_migliore(stato, turni_maurizio, in_ferie, tentativi=60):
-    miglior = {"griglia": None, "errori": [], "warnings": [], "score": 9999,
-               "slot_normali": None, "maurizio_map": None}
+
+def genera_migliore(stato, turni_maurizio, ferie_per_persona, tentativi=80):
+    miglior = {"griglia": None, "errori": [], "warnings": [],
+               "score": 9999, "slots": None, "maurizio_map": None}
     for _ in range(tentativi):
-        griglia, slot_normali, maurizio_map = genera_turni(stato, turni_maurizio, in_ferie)
-        errori, warnings = verifica_turni(griglia, slot_normali, maurizio_map, in_ferie)
+        griglia, slots, maurizio_map = genera_turni(stato, turni_maurizio, ferie_per_persona)
+        errori, warnings = verifica_turni(griglia, slots, maurizio_map, ferie_per_persona)
         score = len(errori) * 100 + len(warnings)
         if score < miglior["score"]:
             miglior = {"griglia": griglia, "errori": errori, "warnings": warnings,
-                       "score": score, "slot_normali": slot_normali, "maurizio_map": maurizio_map}
-        if score == 0: break
+                       "score": score, "slots": slots, "maurizio_map": maurizio_map}
+        if score == 0:
+            break
     return miglior
 
-def verifica_turni(griglia, slot_normali, maurizio_map, in_ferie):
+
+def verifica_turni(griglia, slots, maurizio_map, ferie_per_persona):
     errori, warnings = [], []
-    attivi = [d for d in DIPENDENTI_NORMALI if d not in in_ferie]
 
     for i, g in enumerate(GIORNI):
-        norm_m = [d for d in attivi if griglia[d][i] == "M"]
-        norm_p = [d for d in attivi if griglia[d][i] == "P"]
+        disp   = slots[i]["disp"]
+        norm_m = [d for d in disp if griglia[d][i] == "M"]
+        norm_p = [d for d in disp if griglia[d][i] == "P"]
         maur   = maurizio_map.get(i)
         tot_m  = len(norm_m) + (1 if maur and maur["turno"] == "M" else 0)
         tot_p  = len(norm_p) + (1 if maur and maur["turno"] == "P" else 0)
@@ -272,27 +355,37 @@ def verifica_turni(griglia, slot_normali, maurizio_map, in_ferie):
         if tot_p > 3: errori.append(f"❌ {g}: {tot_p} al pomeriggio (max 3)")
         if tot_m == 3: warnings.append(f"⚠️ {g}: 3 al mattino")
         if tot_p == 3: warnings.append(f"⚠️ {g}: 3 al pomeriggio")
-        if maur and griglia.get("Elena", [None]*7)[i] not in ("F", None) and \
-           griglia["Elena"][i] == maur["turno"]:
+
+        if (maur and "Elena" in disp and
+                griglia["Elena"][i] not in ("F", None) and
+                griglia["Elena"][i] == maur["turno"]):
             errori.append(f"❌ {g}: Elena e Maurizio nello stesso turno!")
 
-    for d in attivi:
+    for d in DIPENDENTI_NORMALI:
+        ferie_giorni = ferie_per_persona.get(d, [])
+        if len(ferie_giorni) == 7:
+            continue   # tutta la settimana in ferie — skip
+        r = griglia[d].count("R")
         m = griglia[d].count("M")
         p = griglia[d].count("P")
-        r = griglia[d].count("R")
-        if r == 0: errori.append(f"❌ {d}: nessun giorno di riposo")
-        if m + p > 6: errori.append(f"❌ {d}: lavora {m+p} giorni (max 6)")
+        # REGOLA BLOCCO: esattamente 1 riposo per settimana (= 1 per blocco 7gg)
+        if r == 0:
+            errori.append(f"❌ {d}: nessun giorno di riposo nel blocco")
+        elif r > 1:
+            errori.append(f"❌ {d}: {r} giorni di riposo nel blocco (max 1)")
+        if m + p > 6:
+            errori.append(f"❌ {d}: lavora {m+p} giorni (max 6)")
         if m > 4: warnings.append(f"⚠️ {d}: {m} mattine questa settimana")
         if p > 4: warnings.append(f"⚠️ {d}: {p} pomeriggi questa settimana")
 
     return errori, warnings
 
-def aggiorna_stato(stato_base, griglia, in_ferie):
+
+def aggiorna_stato(stato_base, griglia, ferie_per_persona):
     s = deepcopy(stato_base)
     for d in DIPENDENTI_NORMALI:
-        if d in in_ferie:
-            s[d]["saldo_ferie"] += 7
-            continue
+        giorni_ferie = len(ferie_per_persona.get(d, []))
+        s[d]["saldo_ferie"]     += giorni_ferie
         s[d]["saldo_mattine"]   += griglia[d].count("M")
         s[d]["saldo_pomeriggi"] += griglia[d].count("P")
         s[d]["saldo_riposi"]    += griglia[d].count("R")
@@ -305,10 +398,12 @@ def aggiorna_stato(stato_base, griglia, in_ferie):
 # UI COMPONENTI
 # ─────────────────────────────────────────────────────────────────────────────
 
-def mostra_griglia(griglia, maurizio_map, in_ferie=None, readonly=True, key_prefix="view"):
-    griglia_out = deepcopy(griglia)
-    in_ferie    = in_ferie or []
+def mostra_griglia(griglia, maurizio_map, ferie_per_persona=None,
+                   readonly=True, key_prefix="view"):
+    griglia_out    = deepcopy(griglia)
+    ferie_per_persona = ferie_per_persona or {}
 
+    # intestazione
     cols = st.columns([2] + [1] * 7)
     cols[0].markdown("**👤**")
     for j, g in enumerate(GIORNI_SHORT):
@@ -316,15 +411,18 @@ def mostra_griglia(griglia, maurizio_map, in_ferie=None, readonly=True, key_pref
     st.divider()
 
     for d in DIPENDENTI_NORMALI:
+        giorni_f = ferie_per_persona.get(d, [])
+        ha_ferie = len(giorni_f) > 0
         cols = st.columns([2] + [1] * 7)
-        nome_label = f"**{d}**" + (" 🏖️" if d in in_ferie else "")
-        cols[0].markdown(nome_label)
+        cols[0].markdown(f"**{d}**" + (" 🏖️" if ha_ferie else ""))
         for j in range(7):
             v = griglia_out[d][j]
-            if not readonly and d not in in_ferie:
+            if not readonly and j not in giorni_f:
+                opzioni = [x for x in VALORI_CELLA if x != "F"]
+                idx_default = opzioni.index(v) if v in opzioni else 0
                 scelta = cols[j+1].selectbox(
-                    label="", options=VALORI_CELLA,
-                    index=VALORI_CELLA.index(v) if v in VALORI_CELLA else 0,
+                    label="", options=opzioni,
+                    index=idx_default,
                     key=f"{key_prefix}_{d}_{j}",
                     label_visibility="collapsed"
                 )
@@ -332,6 +430,7 @@ def mostra_griglia(griglia, maurizio_map, in_ferie=None, readonly=True, key_pref
             else:
                 cols[j+1].markdown(f"{EMOJI.get(v, '?')} {v or '—'}")
 
+    # riga Maurizio
     cols = st.columns([2] + [1] * 7)
     cols[0].markdown("**Maurizio**")
     for j in range(7):
@@ -343,17 +442,20 @@ def mostra_griglia(griglia, maurizio_map, in_ferie=None, readonly=True, key_pref
             cols[j+1].markdown("·")
 
     st.divider()
-    attivi = [d for d in DIPENDENTI_NORMALI if d not in in_ferie]
+
+    # riepilogo
     st.markdown("**📊 Riepilogo**")
-    for d in attivi:
+    for d in DIPENDENTI_NORMALI:
         m = griglia_out[d].count("M")
         p = griglia_out[d].count("P")
         r = griglia_out[d].count("R")
-        st.markdown(f"`{d:10}` &nbsp; 🟡 {m}M &nbsp; 🔵 {p}P &nbsp; ⚪ {r}R")
-    for d in in_ferie:
-        st.markdown(f"`{d:10}` &nbsp; 🏖️ Ferie / Malattia (intera settimana)")
+        f = griglia_out[d].count("F")
+        riga = f"`{d:10}` &nbsp; 🟡 {m}M &nbsp; 🔵 {p}P &nbsp; ⚪ {r}R"
+        if f: riga += f" &nbsp; 🏖️ {f}F"
+        st.markdown(riga)
 
     return griglia_out
+
 
 def mostra_esito(r):
     if r["errori"]:
@@ -363,6 +465,38 @@ def mostra_esito(r):
     if not r["errori"]:
         st.success("✅ Turni validi — nessun errore")
 
+
+def ui_input_ferie():
+    """
+    Widget per selezionare ferie/malattia per giorni specifici.
+    Ritorna ferie_per_persona: Dict[str, List[int]]
+    """
+    st.subheader("2. Ferie / Malattia")
+    chi_assente = st.multiselect(
+        "Chi è assente questa settimana?",
+        options=DIPENDENTI_NORMALI,
+        placeholder="Nessun assente"
+    )
+
+    ferie_per_persona = {}
+    for d in chi_assente:
+        giorni_selezionati = st.multiselect(
+            f"📅 Giorni di assenza di **{d}**:",
+            options=GIORNI,
+            default=GIORNI,   # default: intera settimana
+            key=f"ferie_giorni_{d}"
+        )
+        if giorni_selezionati:
+            ferie_per_persona[d] = [GIORNI.index(g) for g in giorni_selezionati]
+
+    # riepilogo visivo
+    if ferie_per_persona:
+        for d, idxs in ferie_per_persona.items():
+            giorni_str = ", ".join(GIORNI[i] for i in sorted(idxs))
+            st.caption(f"🏖️ **{d}**: {giorni_str} ({len(idxs)} giorni)")
+
+    return ferie_per_persona
+
 # ─────────────────────────────────────────────────────────────────────────────
 # MAIN
 # ─────────────────────────────────────────────────────────────────────────────
@@ -370,19 +504,7 @@ def mostra_esito(r):
 st.title("🍖 Turni Gastronomia")
 
 stato, sha = carica_stato_github()
-
-# migrazione stato vecchio
-if "_meta" not in stato:
-    stato["_meta"] = {
-        "ultimo_input_maurizio":        None,
-        "ultimo_input_ferie":           [],
-        "stato_pre_ultima_generazione": None,
-        "ultimo_turno_generato":        None,
-        "ultimo_maurizio_map":          None,
-    }
-for d in DIPENDENTI_NORMALI:
-    stato[d].setdefault("saldo_riposi", 0)
-    stato[d].setdefault("saldo_ferie",  0)
+stato      = migra_stato(stato)
 
 tab_genera, tab_ultimo, tab_rigenera, tab_saldi, tab_reset = st.tabs([
     "📅 Genera", "📋 Ultimo turno", "🔄 Rigenera", "📈 Saldi", "🗑️ Reset"
@@ -393,6 +515,7 @@ tab_genera, tab_ultimo, tab_rigenera, tab_saldi, tab_reset = st.tabs([
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_genera:
 
+    # ── 1. Input Maurizio ──────────────────────────────────────────────────
     st.subheader("1. Input Maurizio")
     quanti = st.number_input("Quanti giorni lavora Maurizio questa settimana?",
                              min_value=1, max_value=7, value=1, step=1)
@@ -416,14 +539,12 @@ with tab_genera:
             turni_maurizio.append({"idx": idx, "giorno": giorno,
                                    "turno": turno_val, "modalita": mod_val})
 
-    st.subheader("2. Ferie / Malattia")
-    in_ferie = st.multiselect(
-        "Dipendenti assenti questa settimana:",
-        options=DIPENDENTI_NORMALI, placeholder="Nessun assente"
-    )
+    # ── 2. Input Ferie/Malattia ────────────────────────────────────────────
+    ferie_per_persona = ui_input_ferie()
 
+    # ── 3. Analisi Fattibilità ─────────────────────────────────────────────
     st.subheader("3. Verifica configurazione")
-    fat = analizza_fattibilita(turni_maurizio, in_ferie)
+    fat = analizza_fattibilita(turni_maurizio, ferie_per_persona)
 
     if fat["ok"]:
         if fat["turni_da_3"] == 0: st.success(fat["messaggio"])
@@ -431,11 +552,14 @@ with tab_genera:
     else:
         st.error(fat["messaggio"])
 
+    for wg in fat["warning_giorni"]:
+        st.warning(wg)
+
     st.caption(
-        f"Attivi: **{', '.join(fat['attivi'])}** ({fat['N']})  |  "
+        f"Ferie totali: **{fat['ferie_tot']} giorni**  |  "
         f"Maurizio sostituzione: **{fat['S']} giorni**  |  "
-        f"Slot disponibili: **{28 - fat['S']}**  |  "
-        f"Slot necessari (1R esatto): **{fat['N'] * 6}**"
+        f"Deficit: **{fat['deficit']:+d}**  |  "
+        f"Formula: 2 − {fat['ferie_tot']} + {fat['S']} = {fat['deficit']:+d}"
     )
 
     scelta_fat = None
@@ -444,27 +568,29 @@ with tab_genera:
         st.markdown("**Cosa vuoi fare?**")
         scelta_fat = st.radio("", [
             "🔧 Modifica i parametri sopra",
-            "⚠️ Genera comunque (qualche turno potrebbe avere meno di 2 persone)",
+            "⚠️ Genera comunque (alcuni turni potrebbero avere meno di 2 persone)",
             "✏️ Genera e poi editing manuale"
         ], label_visibility="collapsed")
 
     can_genera = fat["ok"] or (scelta_fat is not None and "Modifica" not in scelta_fat)
 
+    # ── Genera ─────────────────────────────────────────────────────────────
     st.markdown("---")
     if st.button("🎲 Genera Turni", use_container_width=True,
                  type="primary", disabled=not can_genera):
         with st.spinner("Generazione in corso..."):
-            risultato = genera_migliore(stato, turni_maurizio, in_ferie)
+            risultato = genera_migliore(stato, turni_maurizio, ferie_per_persona)
         st.session_state.update({
-            "risultato":            risultato,
-            "turni_maurizio_usati": turni_maurizio,
-            "in_ferie_usate":       in_ferie,
-            "stato_pre_gen":        deepcopy(stato),
-            "sha_pre_gen":          sha,
-            "editing_attivo":       scelta_fat is not None and "manuale" in scelta_fat,
-            "griglia_edit":         deepcopy(risultato["griglia"]),
+            "risultato":              risultato,
+            "turni_maurizio_usati":   turni_maurizio,
+            "ferie_usate":            ferie_per_persona,
+            "stato_pre_gen":          deepcopy(stato),
+            "sha_pre_gen":            sha,
+            "editing_attivo":         scelta_fat is not None and "manuale" in scelta_fat,
+            "griglia_edit":           deepcopy(risultato["griglia"]),
         })
 
+    # ── Risultato ──────────────────────────────────────────────────────────
     if "risultato" in st.session_state:
         r = st.session_state["risultato"]
         st.markdown("---")
@@ -474,20 +600,20 @@ with tab_genera:
             st.info("✏️ Modalità editing — modifica le celle poi clicca Verifica.")
             griglia_mod = mostra_griglia(
                 st.session_state["griglia_edit"], r["maurizio_map"],
-                in_ferie=st.session_state["in_ferie_usate"],
+                ferie_per_persona=st.session_state["ferie_usate"],
                 readonly=False, key_prefix="edit_gen"
             )
             st.session_state["griglia_edit"] = griglia_mod
             if st.button("🔍 Verifica modifiche", use_container_width=True):
-                e2, w2 = verifica_turni(griglia_mod, r["slot_normali"],
-                                        r["maurizio_map"], st.session_state["in_ferie_usate"])
+                e2, w2 = verifica_turni(griglia_mod, r["slots"],
+                                        r["maurizio_map"], st.session_state["ferie_usate"])
                 st.session_state["risultato"]["griglia"]  = griglia_mod
                 st.session_state["risultato"]["errori"]   = e2
                 st.session_state["risultato"]["warnings"] = w2
                 st.rerun()
         else:
             mostra_griglia(r["griglia"], r["maurizio_map"],
-                           in_ferie=st.session_state.get("in_ferie_usate", []),
+                           ferie_per_persona=st.session_state.get("ferie_usate", {}),
                            readonly=True)
             if st.button("✏️ Modifica manualmente", use_container_width=True):
                 st.session_state["editing_attivo"] = True
@@ -504,11 +630,14 @@ with tab_genera:
                                       else r["griglia"])
                     stato_pre = st.session_state["stato_pre_gen"]
                     nuovo     = aggiorna_stato(stato_pre, griglia_finale,
-                                              st.session_state["in_ferie_usate"])
+                                              st.session_state["ferie_usate"])
                     mmap_ser  = {str(k): v for k, v in r["maurizio_map"].items()}
+                    # serializza ferie (chiavi int → str per JSON)
+                    ferie_ser = {d: idxs for d, idxs in
+                                 st.session_state["ferie_usate"].items()}
                     nuovo["_meta"].update({
                         "ultimo_input_maurizio":        st.session_state["turni_maurizio_usati"],
-                        "ultimo_input_ferie":           st.session_state["in_ferie_usate"],
+                        "ultimo_input_ferie":           ferie_ser,
                         "stato_pre_ultima_generazione": {k: v for k, v in stato_pre.items()
                                                          if k != "_meta"},
                         "ultimo_turno_generato":        griglia_finale,
@@ -516,7 +645,7 @@ with tab_genera:
                     })
                     salva_stato_github(nuovo, st.session_state["sha_pre_gen"])
                     for k in ["risultato", "editing_attivo", "griglia_edit",
-                              "turni_maurizio_usati", "in_ferie_usate",
+                              "turni_maurizio_usati", "ferie_usate",
                               "stato_pre_gen", "sha_pre_gen"]:
                         st.session_state.pop(k, None)
                     st.success("✅ Turni salvati!")
@@ -529,7 +658,7 @@ with tab_genera:
                     nuovo_r = genera_migliore(
                         st.session_state["stato_pre_gen"],
                         st.session_state["turni_maurizio_usati"],
-                        st.session_state["in_ferie_usate"]
+                        st.session_state["ferie_usate"]
                     )
                 st.session_state.update({
                     "risultato":      nuovo_r,
@@ -543,31 +672,35 @@ with tab_genera:
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_ultimo:
     st.subheader("📋 Ultimo turno salvato")
-    meta      = stato.get("_meta", {})
-    ult_grig  = meta.get("ultimo_turno_generato")
-    ult_mmap  = meta.get("ultimo_maurizio_map")
-    ult_ferie = meta.get("ultimo_input_ferie", [])
+    meta       = stato.get("_meta", {})
+    ult_grig   = meta.get("ultimo_turno_generato")
+    ult_mmap   = meta.get("ultimo_maurizio_map")
+    ult_ferie  = meta.get("ultimo_input_ferie", {})
 
     if not ult_grig or not ult_mmap:
         st.info("Nessun turno ancora salvato.")
     else:
         mmap_int = {int(k): v for k, v in ult_mmap.items()}
-        mostra_griglia(ult_grig, mmap_int, in_ferie=ult_ferie,
+        # ferie: chiavi str → normalizza valori come lista int
+        ferie_int = {d: [int(x) for x in idxs] for d, idxs in ult_ferie.items()}
+        mostra_griglia(ult_grig, mmap_int, ferie_per_persona=ferie_int,
                        readonly=True, key_prefix="ultimo")
-        if ult_ferie:
-            st.caption(f"🏖️ Assenti quella settimana: {', '.join(ult_ferie)}")
+        if ferie_int:
+            for d, idxs in ferie_int.items():
+                giorni_str = ", ".join(GIORNI[i] for i in sorted(idxs))
+                st.caption(f"🏖️ {d}: {giorni_str}")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB RIGENERA
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_rigenera:
     st.subheader("🔄 Rigenera ultima settimana")
-    st.info("Rigenera i turni dell'ultima settimana **senza modificare lo storico**. "
-            "Utile in caso di errori o imprevisti.")
+    st.info("Rigenera i turni dell'ultima settimana **senza modificare lo storico**.")
 
     meta        = stato.get("_meta", {})
     ult_input   = meta.get("ultimo_input_maurizio")
-    ult_ferie_r = meta.get("ultimo_input_ferie", [])
+    ult_ferie_r = {d: [int(x) for x in idxs]
+                   for d, idxs in meta.get("ultimo_input_ferie", {}).items()}
     stato_pre_m = meta.get("stato_pre_ultima_generazione")
 
     if not ult_input or not stato_pre_m:
@@ -577,7 +710,8 @@ with tab_rigenera:
         for m in ult_input:
             st.markdown(f"- **{m['giorno']}** — `{m['turno']}` ({m['modalita']})")
         if ult_ferie_r:
-            st.markdown(f"**Assenti:** {', '.join(ult_ferie_r)}")
+            for d, idxs in ult_ferie_r.items():
+                st.markdown(f"- 🏖️ **{d}**: {', '.join(GIORNI[i] for i in sorted(idxs))}")
 
         if st.button("🔄 Rigenera senza toccare lo storico",
                      use_container_width=True, type="primary"):
@@ -585,28 +719,29 @@ with tab_rigenera:
             for d in base:
                 base[d].setdefault("saldo_riposi", 0)
                 base[d].setdefault("saldo_ferie",  0)
-            base["_meta"] = {k: None for k in ["ultimo_input_maurizio",
-                             "ultimo_input_ferie", "stato_pre_ultima_generazione",
-                             "ultimo_turno_generato", "ultimo_maurizio_map"]}
+            base["_meta"] = {k: None for k in stato_vuoto()["_meta"]}
             with st.spinner("Rigenerazione..."):
                 r = genera_migliore(base, ult_input, ult_ferie_r)
-            st.session_state["risultato_rigenera"]    = r
-            st.session_state["editing_rigenera"]      = False
-            st.session_state["griglia_edit_rig"]      = deepcopy(r["griglia"])
+            st.session_state.update({
+                "risultato_rigenera": r,
+                "editing_rigenera":   False,
+                "griglia_edit_rig":   deepcopy(r["griglia"]),
+            })
 
         if "risultato_rigenera" in st.session_state:
             r = st.session_state["risultato_rigenera"]
             mostra_esito(r)
 
             if st.session_state.get("editing_rigenera"):
-                st.info("✏️ Modalità editing — le modifiche non toccano lo storico.")
+                st.info("✏️ Editing — le modifiche non toccano lo storico.")
                 griglia_mod = mostra_griglia(
                     st.session_state["griglia_edit_rig"], r["maurizio_map"],
-                    in_ferie=ult_ferie_r, readonly=False, key_prefix="edit_rig"
+                    ferie_per_persona=ult_ferie_r,
+                    readonly=False, key_prefix="edit_rig"
                 )
                 st.session_state["griglia_edit_rig"] = griglia_mod
                 if st.button("🔍 Verifica modifiche (rigenera)", use_container_width=True):
-                    e2, w2 = verifica_turni(griglia_mod, r["slot_normali"],
+                    e2, w2 = verifica_turni(griglia_mod, r["slots"],
                                             r["maurizio_map"], ult_ferie_r)
                     st.session_state["risultato_rigenera"]["griglia"]  = griglia_mod
                     st.session_state["risultato_rigenera"]["errori"]   = e2
@@ -614,7 +749,8 @@ with tab_rigenera:
                     st.rerun()
             else:
                 mostra_griglia(r["griglia"], r["maurizio_map"],
-                               in_ferie=ult_ferie_r, readonly=True, key_prefix="rig_view")
+                               ferie_per_persona=ult_ferie_r,
+                               readonly=True, key_prefix="rig_view")
 
             col1, col2 = st.columns(2)
             with col1:
@@ -623,15 +759,13 @@ with tab_rigenera:
                     for d in base:
                         base[d].setdefault("saldo_riposi", 0)
                         base[d].setdefault("saldo_ferie",  0)
-                    base["_meta"] = {k: None for k in ["ultimo_input_maurizio",
-                                     "ultimo_input_ferie", "stato_pre_ultima_generazione",
-                                     "ultimo_turno_generato", "ultimo_maurizio_map"]}
+                    base["_meta"] = {k: None for k in stato_vuoto()["_meta"]}
                     with st.spinner("Rigenerazione..."):
                         r = genera_migliore(base, ult_input, ult_ferie_r)
                     st.session_state.update({
                         "risultato_rigenera": r,
                         "editing_rigenera":   False,
-                        "griglia_edit_rig":   deepcopy(r["griglia"])
+                        "griglia_edit_rig":   deepcopy(r["griglia"]),
                     })
                     st.rerun()
             with col2:
