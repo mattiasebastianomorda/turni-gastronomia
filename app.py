@@ -675,7 +675,7 @@ with tab_ultimo:
     meta       = stato.get("_meta", {})
     ult_grig   = meta.get("ultimo_turno_generato")
     ult_mmap   = meta.get("ultimo_maurizio_map")
-    ult_ferie  = meta.get("ultimo_input_ferie", {})
+    ult_ferie = meta.get("ultimo_input_ferie") or {}
 
     if not ult_grig or not ult_mmap:
         st.info("Nessun turno ancora salvato.")
@@ -699,8 +699,8 @@ with tab_rigenera:
 
     meta        = stato.get("_meta", {})
     ult_input   = meta.get("ultimo_input_maurizio")
-    ult_ferie_r = {d: [int(x) for x in idxs]
-                   for d, idxs in meta.get("ultimo_input_ferie", {}).items()}
+    ult_ferie_raw = meta.get("ultimo_input_ferie") or {}
+    ult_ferie_r = {d: [int(x) for x in idxs] for d, idxs in ult_ferie_raw.items()}
     stato_pre_m = meta.get("stato_pre_ultima_generazione")
 
     if not ult_input or not stato_pre_m:
