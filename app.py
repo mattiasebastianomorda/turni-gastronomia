@@ -307,9 +307,20 @@ def genera_turni(stato, turni_maurizio, ferie_per_persona):
 
         candidati.sort(key=score_mattina, reverse=True)
 
+        # REGOLA: ogni lavoratore DEVE essere assegnato — nessuna cella None.
+        # Se ci sono più lavoratori degli slot standard (per ferie asimmetriche),
+        # l'overflow va nel turno più corto. La verifica segnalerà il turno da 3.
         for d in candidati:
-            if len(assegnati_m) < slot_m:    assegnati_m.append(d)
-            elif len(assegnati_p) < slot_p:  assegnati_p.append(d)
+            if len(assegnati_m) < slot_m:
+                assegnati_m.append(d)
+            elif len(assegnati_p) < slot_p:
+                assegnati_p.append(d)
+            else:
+                # overflow: metti nel turno più corto
+                if len(assegnati_m) <= len(assegnati_p):
+                    assegnati_m.append(d)
+                else:
+                    assegnati_p.append(d)
 
         for d in assegnati_m:
             griglia[d][i] = "M"
@@ -622,8 +633,16 @@ with tab_genera:
 
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("💾 Salva", use_container_width=True,
-                         type="primary", disabled=bool(r["errori"])):
+            editing_on = st.session_state.get("editing_attivo", False)
+            ha_errori  = bool(r["errori"])
+            # Se editing manuale attivo: mostra "Salva comunque" anche con errori
+            if editing_on and ha_errori:
+                st.warning("⚠️ Ci sono errori — puoi salvare comunque "
+                           "perché stai usando l'editing manuale.")
+            label_salva   = "💾 Salva comunque ⚠️" if (editing_on and ha_errori) else "💾 Salva"
+            disab_salva   = ha_errori and not editing_on
+            if st.button(label_salva, use_container_width=True,
+                         type="primary", disabled=disab_salva):
                 try:
                     griglia_finale = (st.session_state["griglia_edit"]
                                       if st.session_state.get("editing_attivo")
@@ -675,7 +694,7 @@ with tab_ultimo:
     meta       = stato.get("_meta", {})
     ult_grig   = meta.get("ultimo_turno_generato")
     ult_mmap   = meta.get("ultimo_maurizio_map")
-    ult_ferie = meta.get("ultimo_input_ferie") or {}
+    ult_ferie  = meta.get("ultimo_input_ferie", {})
 
     if not ult_grig or not ult_mmap:
         st.info("Nessun turno ancora salvato.")
@@ -699,8 +718,8 @@ with tab_rigenera:
 
     meta        = stato.get("_meta", {})
     ult_input   = meta.get("ultimo_input_maurizio")
-    ult_ferie_raw = meta.get("ultimo_input_ferie") or {}
-    ult_ferie_r = {d: [int(x) for x in idxs] for d, idxs in ult_ferie_raw.items()}
+    ult_ferie_r = {d: [int(x) for x in idxs]
+                   for d, idxs in meta.get("ultimo_input_ferie", {}).items()}
     stato_pre_m = meta.get("stato_pre_ultima_generazione")
 
     if not ult_input or not stato_pre_m:
