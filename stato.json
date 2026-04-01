@@ -1,49 +1,210 @@
 {
   "Martina": {
-    "saldo_mattine": 0,
-    "saldo_pomeriggi": 0,
-    "saldo_riposi": 0,
+    "saldo_mattine": 3,
+    "saldo_pomeriggi": 3,
+    "saldo_riposi": 1,
     "saldo_ferie": 0,
-    "ultimi_riposi": [],
-    "ultimi_pattern": []
+    "ultimi_riposi": [
+      "Giovedì"
+    ],
+    "ultimi_pattern": [
+      [
+        "P",
+        "M",
+        "P",
+        "R",
+        "P",
+        "M",
+        "M"
+      ]
+    ]
   },
   "Alessia": {
-    "saldo_mattine": 0,
-    "saldo_pomeriggi": 0,
-    "saldo_riposi": 0,
+    "saldo_mattine": 2,
+    "saldo_pomeriggi": 4,
+    "saldo_riposi": 1,
     "saldo_ferie": 0,
-    "ultimi_riposi": [],
-    "ultimi_pattern": []
+    "ultimi_riposi": [
+      "Lunedì"
+    ],
+    "ultimi_pattern": [
+      [
+        "R",
+        "P",
+        "M",
+        "M",
+        "P",
+        "P",
+        "P"
+      ]
+    ]
   },
   "Elena": {
-    "saldo_mattine": 0,
-    "saldo_pomeriggi": 0,
-    "saldo_riposi": 0,
+    "saldo_mattine": 3,
+    "saldo_pomeriggi": 3,
+    "saldo_riposi": 1,
     "saldo_ferie": 0,
-    "ultimi_riposi": [],
-    "ultimi_pattern": []
+    "ultimi_riposi": [
+      "Mercoledì"
+    ],
+    "ultimi_pattern": [
+      [
+        "P",
+        "M",
+        "R",
+        "P",
+        "M",
+        "P",
+        "M"
+      ]
+    ]
   },
   "Carla": {
-    "saldo_mattine": 0,
-    "saldo_pomeriggi": 0,
-    "saldo_riposi": 0,
+    "saldo_mattine": 5,
+    "saldo_pomeriggi": 1,
+    "saldo_riposi": 1,
     "saldo_ferie": 0,
-    "ultimi_riposi": [],
-    "ultimi_pattern": []
+    "ultimi_riposi": [
+      "Lunedì"
+    ],
+    "ultimi_pattern": [
+      [
+        "R",
+        "P",
+        "M",
+        "M",
+        "M",
+        "M",
+        "M"
+      ]
+    ]
   },
   "Matteo": {
-    "saldo_mattine": 0,
-    "saldo_pomeriggi": 0,
-    "saldo_riposi": 0,
+    "saldo_mattine": 3,
+    "saldo_pomeriggi": 3,
+    "saldo_riposi": 1,
     "saldo_ferie": 0,
-    "ultimi_riposi": [],
-    "ultimi_pattern": []
+    "ultimi_riposi": [
+      "Martedì"
+    ],
+    "ultimi_pattern": [
+      [
+        "M",
+        "R",
+        "P",
+        "P",
+        "M",
+        "M",
+        "P"
+      ]
+    ]
   },
   "_meta": {
-    "ultimo_input_maurizio": null,
+    "ultimo_input_maurizio": [
+      {
+        "idx": 0,
+        "giorno": "Lunedì",
+        "turno": "M",
+        "modalita": "sostituzione"
+      }
+    ],
     "ultimo_input_ferie": {},
-    "stato_pre_ultima_generazione": null,
-    "ultimo_turno_generato": null,
-    "ultimo_maurizio_map": null
+    "stato_pre_ultima_generazione": {
+      "Martina": {
+        "saldo_mattine": 0,
+        "saldo_pomeriggi": 0,
+        "saldo_riposi": 0,
+        "saldo_ferie": 0,
+        "ultimi_riposi": [],
+        "ultimi_pattern": []
+      },
+      "Alessia": {
+        "saldo_mattine": 0,
+        "saldo_pomeriggi": 0,
+        "saldo_riposi": 0,
+        "saldo_ferie": 0,
+        "ultimi_riposi": [],
+        "ultimi_pattern": []
+      },
+      "Elena": {
+        "saldo_mattine": 0,
+        "saldo_pomeriggi": 0,
+        "saldo_riposi": 0,
+        "saldo_ferie": 0,
+        "ultimi_riposi": [],
+        "ultimi_pattern": []
+      },
+      "Carla": {
+        "saldo_mattine": 0,
+        "saldo_pomeriggi": 0,
+        "saldo_riposi": 0,
+        "saldo_ferie": 0,
+        "ultimi_riposi": [],
+        "ultimi_pattern": []
+      },
+      "Matteo": {
+        "saldo_mattine": 0,
+        "saldo_pomeriggi": 0,
+        "saldo_riposi": 0,
+        "saldo_ferie": 0,
+        "ultimi_riposi": [],
+        "ultimi_pattern": []
+      }
+    },
+    "ultimo_turno_generato": {
+      "Martina": [
+        "P",
+        "M",
+        "P",
+        "R",
+        "P",
+        "M",
+        "M"
+      ],
+      "Alessia": [
+        "R",
+        "P",
+        "M",
+        "M",
+        "P",
+        "P",
+        "P"
+      ],
+      "Elena": [
+        "P",
+        "M",
+        "R",
+        "P",
+        "M",
+        "P",
+        "M"
+      ],
+      "Carla": [
+        "R",
+        "P",
+        "M",
+        "M",
+        "M",
+        "M",
+        "M"
+      ],
+      "Matteo": [
+        "M",
+        "R",
+        "P",
+        "P",
+        "M",
+        "M",
+        "P"
+      ]
+    },
+    "ultimo_maurizio_map": {
+      "0": {
+        "idx": 0,
+        "giorno": "Lunedì",
+        "turno": "M",
+        "modalita": "sostituzione"
+      }
+    }
   }
 }
